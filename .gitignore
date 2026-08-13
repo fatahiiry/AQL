@@ -1,0 +1,67 @@
+# ==========================================
+# Environnements Virtuels Python
+# ==========================================
+.venv/
+.env/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# ==========================================
+# Caches Python & Fichiers Compilés
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ==========================================
+# Fichiers de configuration IDE & Éditeurs
+# ==========================================
+# JetBrains / PyCharm / WebStorm
+.idea/
+
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Éditeurs divers
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ==========================================
+# Fichiers Confidentiels & Variables d'Environnement
+# ==========================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ==========================================
+# Base de données locales / Logs
+# ==========================================
+*.sqlite3
+*.db
+*.log
+logs/
+
+# ==========================================
+# Node.js / Frontend (si applicable)
+# ==========================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dist/
+build/
+# Exécutables Windows
+*.exe
