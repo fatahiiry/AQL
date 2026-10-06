@@ -1,0 +1,7 @@
+streamlit
+pyodbc
+pandas
+sqlalchemy
+openpyxl
+python-calamine
+xlsxwriter

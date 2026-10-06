@@ -1,5 +1,8 @@
 import os
+import re
 import pandas as pd
+import json
+import warnings
 import pyodbc
 from sqlalchemy import create_engine
 import streamlit as st
@@ -147,7 +150,7 @@ def get_of_records(of_val):
         return pd.DataFrame()
 
 def insert_record(data: dict):
-    """Insère un contrôle qualité en base de données."""
+    """Insère un contrôle qualité (sans surcharger avec les pièces jointes)."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -159,8 +162,9 @@ def insert_record(data: dict):
             total_defaut, pourcentage_defaut, defaut_majeur, defaut_mineur, 
             defaut_securitaire, description_nc, description_nc1, decision, 
             quantite_triee, total_defaut_tri, nb_defauts_tri, pourcentage_defaut_tri, 
-            numero_qc, temps_tri_mn, cout_mn, cout_tri
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            numero_qc, temps_tri_mn, cout_mn, cout_tri,
+            num_facture, motif_facture
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             data.get("date_controle"),
@@ -175,7 +179,8 @@ def insert_record(data: dict):
             data.get("qte_of", 0),
             data.get("qte_presentee", 0),
             str(data.get("cartons_presentes", "")),
-            str(data.get("carton_controle", "")),             data.get("numero_palette"),
+            str(data.get("carton_controle", "")),
+            data.get("numero_palette"),
             data.get("qte_controlee", 0),
             data.get("pourcentage_controle", 0.0),
             data.get("total_defaut", 0),
@@ -194,18 +199,71 @@ def insert_record(data: dict):
             data.get("temps_tri_mn", 0),
             data.get("cout_mn", 0.0),
             data.get("cout_tri", 0.0),
+            data.get("num_facture"),
+            data.get("motif_facture")
         ),
     )
     conn.commit()
     conn.close()
 
+def insert_piece_jointe_record(data: dict) -> bool:
+    """Insère la référence d'une pièce jointe dans QualiteDB.dbo.controle_pieces_jointes."""
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        query = """
+            INSERT INTO [QualiteDB].[dbo].[controle_pieces_jointes] (
+                of_val, reference, nom_fichier, chemin_fichier, fichier_data, type_mime, date_depot
+            ) VALUES (?, ?, ?, ?, ?, ?, GETDATE())
+        """
+
+        params = (
+            data.get("of_val"),
+            data.get("reference"),
+            data.get("nom_fichier"),
+            data.get("chemin_fichier"),
+            data.get("fichier_data", None),  # None si sauvé sur disque
+            data.get("type_mime", "application/octet-stream"),
+        )
+
+        cursor.execute(query, params)
+        conn.commit()
+        cursor.close()
+        return True
+    except Exception as e:
+        print(f"❌ Erreur insertion PJ dans controle_pieces_jointes : {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
 def load_records(limit=300):
     try:
         conn = get_connection()
-        query = f"SELECT TOP {limit} * FROM controle_qualite ORDER BY id DESC"
-        return pd.read_sql(query, conn)
+        # Requête complète avec espace avant FROM et sélection explicite des champs
+        query = f"""
+            SELECT TOP ({limit})
+                id, date_controle, chaine, client, [of], article, reference, coloris, norme,
+                qte_presentee, qte_controlee, total_defaut, defaut_majeur, defaut_mineur, defaut_securitaire,
+                description_nc, description_nc1, pourcentage_defaut, decision,
+                num_facture, cout_tri, temps_tri_mn, numero_qc, controleur_final
+            FROM controle_qualite
+            ORDER BY id DESC
+        """
+
+        # Gestion de la lecture selon le type de connexion (SQLAlchemy ou pyodbc)
+        if hasattr(conn, "connect"):
+            with conn.connect() as connection:
+                df = pd.read_sql(query, connection)
+        else:
+            df = pd.read_sql(query, conn)
+            conn.close()
+
+        return df
     except Exception as e:
-        print(f"Erreur SQL load_records: {e}")
+        print(f"❌ Erreur SQL load_records: {e}")
         return pd.DataFrame()
 
 def get_mesures_by_reference(reference_val):
@@ -285,34 +343,234 @@ def fetch_db_typologie_defauts():
     print(f"Erreur lors de la récupération des typologies : {e}")
     return []
 
-def insert_photo_record(data_photo):
-  """Insère un enregistrement dans la table QualiteDB.dbo.controle_photos."""
-  try:
-    conn = get_connection()  # Utilisez le nom de votre fonction de connexion
-    cursor = conn.cursor()
+def insert_photo_record(data_photo: dict) -> bool:
+    """Insère la référence d'une photo dans QualiteDB.dbo.controle_photos."""
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
 
-    query = """
+        query = """
             INSERT INTO [QualiteDB].[dbo].[controle_photos] (
                 of_val, reference, nom_fichier, chemin_fichier, photo_bytes, date_capture
             ) VALUES (?, ?, ?, ?, ?, GETDATE())
         """
 
-    params = (
-        data_photo.get('of_val'),
-        data_photo.get('reference'),
-        data_photo.get('nom_fichier'),
-        data_photo.get('chemin_fichier'),
-        data_photo.get('photo_bytes'),
-    )
+        params = (
+            data_photo.get("of_val"),
+            data_photo.get("reference"),
+            data_photo.get("nom_fichier"),
+            data_photo.get("chemin_fichier"),
+            data_photo.get("photo_bytes", None),  # None si sauvé sur disque
+        )
 
-    cursor.execute(query, params)
-    conn.commit()
-    cursor.close()
-    conn.close()
-    return True
-  except Exception as e:
-    print(
-        "Erreur lors de l'insertion de la photo dans controle_photos :"
-        f" {e}"
-    )
-    return False
+        cursor.execute(query, params)
+        conn.commit()
+        cursor.close()
+        return True
+    except Exception as e:
+        print(f"❌ Erreur insertion photo dans controle_photos : {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def insert_mesures_record(mesures_data):
+    """Enregistre chaque point de mesure sous forme d'une ligne dans SQL Server."""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        query = """
+            INSERT INTO [QualiteDB].[dbo].[controle_sur_mesure] (
+                of_num, chaine, date_controle, reference, qte_controlee,
+                coloris, taille, controleur, decision,
+                point_de_mesure, tolerance, valeur_cible,
+                piece_1, piece_2, piece_3, piece_4
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+
+        details = mesures_data.get("details_mesures", [])
+
+        # Insertion ligne par ligne pour chaque point de mesure
+        for row in details:
+            # Conversion sécurisée des valeurs numériques/texte
+            tol_val = (
+                float(row.get("TOL (+/-)"))
+                if row.get("TOL (+/-)") not in [None, ""]
+                else None
+            )
+            cible_val = (
+                float(row.get("CIBLE (cm)"))
+                if row.get("CIBLE (cm)") not in [None, ""]
+                else None
+            )
+
+            params = (
+                str(mesures_data.get("num_of", "")).strip(),
+                str(mesures_data.get("chaine", "")).strip(),
+                mesures_data.get("date_controle"),
+                str(mesures_data.get("reference", "")).strip(),
+                mesures_data.get("qte_controlee", 0),
+                str(mesures_data.get("coloris", "")).strip(),
+                str(mesures_data.get("taille", "")).strip(),
+                str(mesures_data.get("controleur", "")).strip(),
+                str(mesures_data.get("statut_mesure", "")).strip(),
+                str(row.get("POINTS DE MESURE", "")).strip(),
+                tol_val,
+                cible_val,
+                str(row.get("Pièce 1", "")).strip(),
+                str(row.get("Pièce 2", "")).strip(),
+                str(row.get("Pièce 3", "")).strip(),
+                str(row.get("Pièce 4", "")).strip(),
+            )
+
+            cursor.execute(query, params)
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+
+    except Exception as e:
+        print(f"❌ Erreur SQL insert_mesures_record : {e}")
+        raise e
+
+# EXTRACTION ET SYNCHRONISATION AUTOMATIQUE DE PRODUCTION (EXCEL ➡ SQL)
+def extraire_et_centraliser():
+    """Extraction automatique depuis le fichier Excel vers la table 'donnees_production'."""
+    file_path = os.getenv("FILE_PRODUCTION")
+    sheet_name = os.getenv("SHEET_PRODUCTION", "RECAP GLOBAL COMMANDE")
+
+    if not file_path or not os.path.exists(file_path):
+        print(f"⚠️ Fichier Excel introuvable ou chemin invalide : {file_path}")
+        return False
+
+    try:
+        # Colonnes Excel à lire : C(2), K(10), L(11), M(12), N(13), O(14), U(20), X(23), Z(25)
+        indices_colonnes = [2, 10, 11, 12, 13, 14, 20, 23, 25]
+
+        df = pd.read_excel(
+            file_path,
+            sheet_name=sheet_name,
+            engine="openpyxl",
+            header=9,
+            usecols=indices_colonnes,
+        )
+
+        if df.empty:
+            print("❌ Aucune donnée trouvée dans le fichier Excel.")
+            return False
+
+        # Renommage explicite des colonnes
+        df.columns = [
+            "Col_C",
+            "Col_K",
+            "Col_L",
+            "Col_M",
+            "Col_N",
+            "Col_O",
+            "Col_U",
+            "Col_X",
+            "Col_Z",
+        ]
+
+        # Supprimer uniquement les lignes où le numéro d'OF (Col_L) est vide
+        df = df.dropna(subset=["Col_L"])
+
+        # Nettoyage des données
+        df["Col_C"] = (
+            df["Col_C"].fillna("Client Inconnu").astype(str).str.strip()
+        )
+        df["Col_K"] = df["Col_K"].fillna("").astype(str).str.strip()
+        df["Col_L"] = df["Col_L"].fillna("").astype(str).str.strip()
+        df["Col_O"] = df["Col_O"].fillna("").astype(str).str.strip()
+        df["Col_U"] = df["Col_U"].fillna("").astype(str).str.strip()
+        df["Col_X"] = df["Col_X"].fillna("").astype(str).str.strip()
+        df["Col_Z"] = df["Col_Z"].fillna("").astype(str).str.strip()
+
+        # Fusion M + N -> Coloris
+        df["Col_M"] = df["Col_M"].fillna("").astype(str).str.strip()
+        df["Col_N"] = df["Col_N"].fillna("").astype(str).str.strip()
+        df["Coloris_Combine"] = (df["Col_M"] + " " + df["Col_N"]).str.strip()
+
+        # Connexion SQL Server
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Vidage de la table temporaire
+        cursor.execute("TRUNCATE TABLE donnees_production")
+
+        # Insertion
+        query = """
+            INSERT INTO donnees_production (client, cde_mere, num_of, coloris, opt, reference, article, norme)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """
+
+        cursor.fast_executemany = True
+        insert_data = [
+            (
+                row["Col_C"],
+                row["Col_K"],
+                row["Col_L"],
+                row["Coloris_Combine"],
+                row["Col_O"],
+                row["Col_U"],
+                row["Col_Z"],
+                row["Col_X"],
+            )
+            for _, row in df.iterrows()
+        ]
+
+        cursor.executemany(query, insert_data)
+        conn.commit()
+
+        cursor.close()
+        conn.close()
+        print("✅ Base 'donnees_production' mise à jour avec succès !")
+        return True
+
+    except Exception as e:
+        print(f"❌ Erreur lors de la synchro Excel : {e}")
+        return False
+
+
+def get_photos_by_of(of_val):
+    """Récupère la liste des photos associées à un OF depuis controle_photos."""
+    try:
+        conn = get_connection()
+        query = """
+            SELECT nom_fichier, chemin_fichier, photo_bytes 
+            FROM [QualiteDB].[dbo].[controle_photos]
+            WHERE LOWER(TRIM([of_val])) = LOWER(TRIM(?))
+            ORDER BY date_capture DESC
+        """
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            df = pd.read_sql(query, conn, params=[of_val])
+        conn.close()
+        return df
+    except Exception as e:
+        print(f"❌ Erreur SQL get_photos_by_of: {e}")
+        return pd.DataFrame()
+
+
+def get_pieces_jointes_by_of(of_val):
+    """Récupère la liste des pièces jointes associées à un OF depuis controle_pieces_jointes."""
+    try:
+        conn = get_connection()
+        query = """
+            SELECT nom_fichier, chemin_fichier, fichier_data, type_mime 
+            FROM [QualiteDB].[dbo].[controle_pieces_jointes]
+            WHERE LOWER(TRIM([of_val])) = LOWER(TRIM(?))
+            ORDER BY date_depot DESC
+        """
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            df = pd.read_sql(query, conn, params=[of_val])
+        conn.close()
+        return df
+    except Exception as e:
+        print(f"❌ Erreur SQL get_pieces_jointes_by_of: {e}")
+        return pd.DataFrame()

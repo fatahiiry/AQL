@@ -16,7 +16,26 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+@st.cache_resource(ttl=900)
+def synchro_automatique():
+    return db.extraire_et_centraliser()
 
+
+# Lancement silencieux
+synchro_automatique()
+
+
+# 2. BOUTON DE SYNCHRO MANUELLE DANS LA BARRE LATÉRALE
+with st.sidebar:
+    st.markdown("---")
+    st.caption("⚙️ **Synchronisation Données**")
+    if st.button("🔄 Synchroniser Excel ➡️ SQL"):
+        with st.spinner("Mise à jour depuis le fichier Excel..."):
+            if db.extraire_et_centraliser():
+                st.success("✅ Base mise à jour !")
+                st.rerun()
+            else:
+                st.error("❌ Échec de la synchronisation.")
 styles.apply_custom_styles()
 
 # ── Initialisation du Session State

@@ -1,9 +1,4 @@
 172.31.220.205 {
     tls internal
-    reverse_proxy 127.0.0.1:8503 {
-        header_up Host {host}
-        header_up X-Real-IP {remote_host}
-        header_up Connection "Upgrade"
-        header_up Upgrade "websocket"
-    }
+    reverse_proxy 127.0.0.1:8503
 }
